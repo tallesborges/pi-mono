@@ -16,7 +16,7 @@ import {
 	VERSION,
 } from "./config.js";
 import { exportFromFile } from "./export-html.js";
-import { findModel, getApiKeyForModel, getAvailableModels } from "./model-config.js";
+import { findModel, getApiKeyForModel, getAvailableModels, getChatGptOAuthContext } from "./model-config.js";
 import { SessionManager } from "./session-manager.js";
 import { SettingsManager } from "./settings-manager.js";
 import { expandSlashCommand, loadSlashCommands } from "./slash-commands.js";
@@ -1160,6 +1160,10 @@ export async function main(args: string[]) {
 					);
 				}
 				return key;
+			},
+			// OAuth context for ChatGPT backend (OpenAI OAuth tokens)
+			getOAuthContext: async (model) => {
+				return getChatGptOAuthContext(model);
 			},
 		}),
 	});
