@@ -1,5 +1,3 @@
-import * as fs from "node:fs";
-import * as path from "node:path";
 import type { Agent, AgentEvent, AgentState, ThinkingLevel } from "@mariozechner/pi-agent-core";
 import type { AssistantMessage, Message, Model } from "@mariozechner/pi-ai";
 import type { SlashCommand } from "@mariozechner/pi-tui";
@@ -14,17 +12,15 @@ import {
 	Text,
 	TruncatedText,
 	TUI,
-	visibleWidth,
 } from "@mariozechner/pi-tui";
+
 import { exec } from "child_process";
 import { getChangelogPath, parseChangelog } from "../changelog.js";
-import { APP_NAME, getDebugLogPath, getModelsPath, getOAuthPath } from "../config.js";
 import { exportSessionToHtml } from "../export-html.js";
-import { getApiKeyForModel, getAvailableModels, invalidateOAuthCache } from "../model-config.js";
+import { getApiKeyForModel, getAvailableModels } from "../model-config.js";
 import { getOAuthProviders, listOAuthProviders, login, loginWithBrowser, logout } from "../oauth/index.js";
 import type { SessionManager } from "../session-manager.js";
 import type { SettingsManager } from "../settings-manager.js";
-import { expandSlashCommand, type FileSlashCommand, loadSlashCommands } from "../slash-commands.js";
 import { getEditorTheme, getMarkdownTheme, onThemeChange, setTheme, theme } from "../theme/theme.js";
 import { AssistantMessageComponent } from "./assistant-message.js";
 import { CustomEditor } from "./custom-editor.js";
@@ -100,9 +96,6 @@ export class TuiRenderer {
 
 	// Agent subscription unsubscribe function
 	private unsubscribe?: () => void;
-
-	// File-based slash commands
-	private fileCommands: FileSlashCommand[] = [];
 
 	constructor(
 		agent: Agent,
@@ -186,15 +179,6 @@ export class TuiRenderer {
 			description: "Clear context and start a fresh session",
 		};
 
-		// Load file-based slash commands
-		this.fileCommands = loadSlashCommands();
-
-		// Convert file commands to SlashCommand format
-		const fileSlashCommands: SlashCommand[] = this.fileCommands.map((cmd) => ({
-			name: cmd.name,
-			description: cmd.description,
-		}));
-
 		// Setup autocomplete for file paths and slash commands
 		const autocompleteProvider = new CombinedAutocompleteProvider(
 			[
@@ -209,7 +193,6 @@ export class TuiRenderer {
 				logoutCommand,
 				queueCommand,
 				clearCommand,
-				...fileSlashCommands,
 			],
 			process.cwd(),
 			fdPath,
@@ -221,7 +204,7 @@ export class TuiRenderer {
 		if (this.isInitialized) return;
 
 		// Add header with logo and instructions
-		const logo = theme.bold(theme.fg("accent", APP_NAME)) + theme.fg("dim", ` v${this.version}`);
+		const logo = theme.bold(theme.fg("accent", "pi")) + theme.fg("dim", ` v${this.version}`);
 		const instructions =
 			theme.fg("dim", "esc") +
 			theme.fg("muted", " to interrupt") +
@@ -418,23 +401,13 @@ export class TuiRenderer {
 				return;
 			}
 
-			// Check for /debug command
-			if (text === "/debug") {
-				this.handleDebugCommand();
-				this.editor.setText("");
-				return;
-			}
-
-			// Check for file-based slash commands
-			text = expandSlashCommand(text, this.fileCommands);
-
 			// Normal message submission - validate model and API key first
 			const currentModel = this.agent.state.model;
 			if (!currentModel) {
 				this.showError(
 					"No model selected.\n\n" +
 						"Set an API key (ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.)\n" +
-						`or create ${getModelsPath()}\n\n` +
+						"or create ~/.pi/agent/models.json\n\n" +
 						"Then use /model to select a model.",
 				);
 				return;
@@ -445,7 +418,7 @@ export class TuiRenderer {
 			if (!apiKey) {
 				this.showError(
 					`No API key found for ${currentModel.provider}.\n\n` +
-						`Set the appropriate environment variable or update ${getModelsPath()}`,
+						`Set the appropriate environment variable or update ~/.pi/agent/models.json`,
 				);
 				this.editor.setText(text);
 				return;
@@ -489,11 +462,6 @@ export class TuiRenderer {
 		onThemeChange(() => {
 			this.ui.invalidate();
 			this.updateEditorBorderColor();
-			this.ui.requestRender();
-		});
-
-		// Set up git branch watcher
-		this.footer.watchBranch(() => {
 			this.ui.requestRender();
 		});
 	}
@@ -1260,8 +1228,7 @@ export class TuiRenderer {
 	}
 
 	private async showOAuthSelector(mode: "login" | "logout"): Promise<void> {
-		// For logout mode, filter to only show logged-in providers
-		let providersToShow: string[] = [];
+		// For logout mode, only show logged-in providers
 		if (mode === "logout") {
 			const loggedInProviders = listOAuthProviders();
 			if (loggedInProviders.length === 0) {
@@ -1272,114 +1239,21 @@ export class TuiRenderer {
 				this.ui.requestRender();
 				return;
 			}
-			providersToShow = loggedInProviders;
 		}
 
 		// Create OAuth selector
 		this.oauthSelector = new OAuthSelectorComponent(
 			mode,
 			async (providerId: any) => {
-				// Hide selector first
 				this.hideOAuthSelector();
 
 				if (mode === "login") {
-					// Get flow type for the provider
-					const providers = getOAuthProviders();
-					const providerInfo = providers.find((p) => p.id === providerId);
-					const flowType = providerInfo?.flowType || "manual";
-
-					// Handle login
-					this.chatContainer.addChild(new Spacer(1));
-					this.chatContainer.addChild(new Text(theme.fg("dim", `Logging in to ${providerId}...`), 1, 0));
-					this.ui.requestRender();
-
-					try {
-						if (flowType === "browser") {
-							// Browser flow (OpenAI) - automatic callback
-							await loginWithBrowser(providerId, (status: string) => {
-								this.chatContainer.addChild(new Spacer(1));
-								this.chatContainer.addChild(new Text(theme.fg("dim", status), 1, 0));
-								this.ui.requestRender();
-							});
-						} else {
-							// Manual flow (Anthropic) - paste code
-							await login(
-								providerId,
-								(url: string) => {
-									// Show auth URL to user
-									this.chatContainer.addChild(new Spacer(1));
-									this.chatContainer.addChild(new Text(theme.fg("accent", "Opening browser to:"), 1, 0));
-									this.chatContainer.addChild(new Text(theme.fg("accent", url), 1, 0));
-									this.chatContainer.addChild(new Spacer(1));
-									this.chatContainer.addChild(
-										new Text(theme.fg("warning", "Paste the authorization code below:"), 1, 0),
-									);
-									this.ui.requestRender();
-
-									// Open URL in browser
-									const openCmd =
-										process.platform === "darwin"
-											? "open"
-											: process.platform === "win32"
-												? "start"
-												: "xdg-open";
-									exec(`${openCmd} "${url}"`);
-								},
-								async () => {
-									// Prompt for code with a simple Input
-									return new Promise<string>((resolve) => {
-										const codeInput = new Input();
-										codeInput.onSubmit = () => {
-											const code = codeInput.getValue();
-											// Restore editor
-											this.editorContainer.clear();
-											this.editorContainer.addChild(this.editor);
-											this.ui.setFocus(this.editor);
-											resolve(code);
-										};
-
-										this.editorContainer.clear();
-										this.editorContainer.addChild(codeInput);
-										this.ui.setFocus(codeInput);
-										this.ui.requestRender();
-									});
-								},
-							);
-						}
-
-						// Success - invalidate OAuth cache so footer updates
-						invalidateOAuthCache();
-						this.chatContainer.addChild(new Spacer(1));
-						this.chatContainer.addChild(
-							new Text(theme.fg("success", `✓ Successfully logged in to ${providerId}`), 1, 0),
-						);
-						this.chatContainer.addChild(new Text(theme.fg("dim", `Tokens saved to ${getOAuthPath()}`), 1, 0));
-						this.ui.requestRender();
-					} catch (error: any) {
-						this.showError(`Login failed: ${error.message}`);
-					}
+					await this.handleOAuthLogin(providerId);
 				} else {
-					// Handle logout
-					try {
-						await logout(providerId);
-
-						// Invalidate OAuth cache so footer updates
-						invalidateOAuthCache();
-						this.chatContainer.addChild(new Spacer(1));
-						this.chatContainer.addChild(
-							new Text(theme.fg("success", `✓ Successfully logged out of ${providerId}`), 1, 0),
-						);
-						this.chatContainer.addChild(
-							new Text(theme.fg("dim", `Credentials removed from ${getOAuthPath()}`), 1, 0),
-						);
-						this.ui.requestRender();
-					} catch (error: any) {
-						this.showError(`Logout failed: ${error.message}`);
-					}
+					await this.handleOAuthLogout(providerId);
 				}
 			},
 			() => {
-				// Cancel - just hide the selector
 				this.hideOAuthSelector();
 				this.ui.requestRender();
 			},
@@ -1390,6 +1264,101 @@ export class TuiRenderer {
 		this.editorContainer.addChild(this.oauthSelector);
 		this.ui.setFocus(this.oauthSelector);
 		this.ui.requestRender();
+	}
+
+	private async handleOAuthLogin(providerId: any): Promise<void> {
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(new Text(theme.fg("dim", `Logging in to ${providerId}...`), 1, 0));
+		this.ui.requestRender();
+
+		try {
+			const providers = getOAuthProviders();
+			const providerInfo = providers.find((p) => p.id === providerId);
+			const flowType = providerInfo?.flowType || "manual";
+
+			if (flowType === "browser") {
+				await this.handleBrowserFlow(providerId);
+			} else {
+				await this.handleManualFlow(providerId);
+			}
+
+			// Invalidate OAuth cache so footer updates
+			invalidateOAuthCache();
+			this.chatContainer.addChild(new Spacer(1));
+			this.chatContainer.addChild(new Text(theme.fg("success", `✓ Successfully logged in to ${providerId}`), 1, 0));
+			this.chatContainer.addChild(new Text(theme.fg("dim", `Tokens saved to ${getOAuthPath()}`), 1, 0));
+			this.ui.requestRender();
+		} catch (error: any) {
+			this.showError(`Login failed: ${error.message}`);
+		}
+	}
+
+	private async handleBrowserFlow(providerId: any): Promise<void> {
+		await loginWithBrowser(providerId, (status: string) => {
+			this.chatContainer.addChild(new Spacer(1));
+			this.chatContainer.addChild(new Text(theme.fg("dim", status), 1, 0));
+			this.ui.requestRender();
+		});
+	}
+
+	private async handleManualFlow(providerId: any): Promise<void> {
+		await login(
+			providerId,
+			(url: string) => {
+				this.showAuthUrl(url);
+				this.openBrowser(url);
+			},
+			() => this.promptForAuthCode(),
+		);
+	}
+
+	private showAuthUrl(url: string): void {
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(new Text(theme.fg("accent", "Opening browser to:"), 1, 0));
+		this.chatContainer.addChild(new Text(theme.fg("accent", url), 1, 0));
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(new Text(theme.fg("warning", "Paste the authorization code below:"), 1, 0));
+		this.ui.requestRender();
+	}
+
+	private openBrowser(url: string): void {
+		const openCmd = process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
+		exec(`${openCmd} "${url}"`);
+	}
+
+	private async promptForAuthCode(): Promise<string> {
+		return new Promise<string>((resolve) => {
+			const codeInput = new Input();
+			codeInput.onSubmit = () => {
+				const code = codeInput.getValue();
+				this.editorContainer.clear();
+				this.editorContainer.addChild(this.editor);
+				this.ui.setFocus(this.editor);
+				resolve(code);
+			};
+
+			this.editorContainer.clear();
+			this.editorContainer.addChild(codeInput);
+			this.ui.setFocus(codeInput);
+			this.ui.requestRender();
+		});
+	}
+
+	private async handleOAuthLogout(providerId: any): Promise<void> {
+		try {
+			await logout(providerId);
+
+			// Invalidate OAuth cache so footer updates
+			invalidateOAuthCache();
+			this.chatContainer.addChild(new Spacer(1));
+			this.chatContainer.addChild(new Text(theme.fg("success", `✓ Successfully logged out of ${providerId}`), 1, 0));
+			this.chatContainer.addChild(
+				new Text(theme.fg("dim", `Credentials removed from ${getOAuthPath()}`), 1, 0),
+			);
+			this.ui.requestRender();
+		} catch (error: any) {
+			this.showError(`Logout failed: ${error.message}`);
+		}
 	}
 
 	private hideOAuthSelector(): void {
@@ -1557,38 +1526,6 @@ export class TuiRenderer {
 		this.ui.requestRender();
 	}
 
-	private handleDebugCommand(): void {
-		// Force a render and capture all lines with their widths
-		const width = (this.ui as any).terminal.columns;
-		const allLines = this.ui.render(width);
-
-		const debugLogPath = getDebugLogPath();
-		const debugData = [
-			`Debug output at ${new Date().toISOString()}`,
-			`Terminal width: ${width}`,
-			`Total lines: ${allLines.length}`,
-			"",
-			"=== All rendered lines with visible widths ===",
-			...allLines.map((line, idx) => {
-				const vw = visibleWidth(line);
-				const escaped = JSON.stringify(line);
-				return `[${idx}] (w=${vw}) ${escaped}`;
-			}),
-			"",
-		].join("\n");
-
-		fs.mkdirSync(path.dirname(debugLogPath), { recursive: true });
-		fs.writeFileSync(debugLogPath, debugData);
-
-		// Show confirmation
-		this.chatContainer.addChild(new Spacer(1));
-		this.chatContainer.addChild(
-			new Text(theme.fg("accent", "✓ Debug log written") + "\n" + theme.fg("muted", debugLogPath), 1, 1),
-		);
-
-		this.ui.requestRender();
-	}
-
 	private updatePendingMessagesDisplay(): void {
 		this.pendingMessagesContainer.clear();
 
@@ -1607,7 +1544,6 @@ export class TuiRenderer {
 			this.loadingAnimation.stop();
 			this.loadingAnimation = null;
 		}
-		this.footer.dispose();
 		if (this.isInitialized) {
 			this.ui.stop();
 			this.isInitialized = false;
