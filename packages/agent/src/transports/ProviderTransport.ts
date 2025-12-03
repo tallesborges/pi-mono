@@ -10,7 +10,7 @@ import {
 import type { AgentRunConfig, AgentTransport } from "./types.js";
 
 /**
- * OAuth context for providers that require special endpoints/headers (e.g., ChatGPT backend for OpenAI OAuth)
+ * OAuth context for models that require runtime header injection (e.g., session-id for codex provider)
  */
 export interface OAuthContext {
 	baseUrl: string;
@@ -26,8 +26,9 @@ export interface ProviderTransportOptions {
 
 	/**
 	 * Function to retrieve OAuth context for a model.
-	 * Returns base URL and headers needed for OAuth flows (e.g., ChatGPT backend for OpenAI OAuth).
-	 * If null is returned, standard API endpoint is used.
+	 * Returns headers (and optionally base URL override) for models requiring runtime injection.
+	 * Used for codex provider to inject session-id header at runtime.
+	 * If null is returned, model's default baseUrl and headers are used.
 	 */
 	getOAuthContext?: (model: Model<any>) => Promise<OAuthContext | null> | OAuthContext | null;
 
@@ -66,7 +67,7 @@ export class ProviderTransport implements AgentTransport {
 			throw new Error(`No API key found for provider: ${cfg.model.provider}`);
 		}
 
-		// Check for OAuth context (e.g., ChatGPT backend for OpenAI OAuth)
+		// Check for OAuth context (for models requiring runtime header injection)
 		let oauthContext: OAuthContext | null = null;
 		if (this.options.getOAuthContext) {
 			oauthContext = await this.options.getOAuthContext(cfg.model);
@@ -93,7 +94,7 @@ export class ProviderTransport implements AgentTransport {
 			reasoning: cfg.reasoning,
 			apiKey,
 			getQueuedMessages: cfg.getQueuedMessages,
-			// Pass OAuth context if available (for ChatGPT backend, etc.)
+			// Pass OAuth context if available (for runtime header injection)
 			baseUrlOverride: oauthContext?.baseUrl,
 			headers: oauthContext?.headers,
 		};

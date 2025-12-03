@@ -35,6 +35,7 @@ const defaultModelPerProvider: Record<KnownProvider, string> = {
 	groq: "openai/gpt-oss-120b",
 	cerebras: "zai-glm-4.6",
 	zai: "glm-4.6",
+	codex: "gpt-5.1-codex-max",
 };
 
 type Mode = "text" | "json" | "rpc";

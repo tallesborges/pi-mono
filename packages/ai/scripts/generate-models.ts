@@ -324,18 +324,61 @@ async function generateModels() {
 		});
 	}
 
-	if (!allModels.some(m => m.provider === "openai" && m.id === "gpt-5.1-codex")) {
+	// Add Codex models as separate provider (uses ChatGPT backend via OAuth)
+	// These models use a dedicated openai-codex API that includes required Codex instructions
+	// Note: session-id header needs to be injected at runtime
+	if (!allModels.some(m => m.provider === "codex" && m.id === "gpt-5.1-codex")) {
 		allModels.push({
 			id: "gpt-5.1-codex",
 			name: "GPT-5.1 Codex",
-			api: "openai-responses",
-			baseUrl: "https://api.openai.com/v1",
-			provider: "openai",
+			api: "openai-codex",
+			baseUrl: "https://chatgpt.com/backend-api/codex",
+			provider: "codex",
 			reasoning: true,
 			input: ["text", "image"],
 			cost: {
 				input: 1.25,
 				output: 5,
+				cacheRead: 0.125,
+				cacheWrite: 1.25,
+			},
+			contextWindow: 400000,
+			maxTokens: 128000,
+		});
+	}
+
+	if (!allModels.some(m => m.provider === "codex" && m.id === "gpt-5.1-codex-mini")) {
+		allModels.push({
+			id: "gpt-5.1-codex-mini",
+			name: "GPT-5.1 Codex Mini",
+			api: "openai-codex",
+			baseUrl: "https://chatgpt.com/backend-api/codex",
+			provider: "codex",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: {
+				input: 0.5,
+				output: 2.5,
+				cacheRead: 0.05,
+				cacheWrite: 0.5,
+			},
+			contextWindow: 400000,
+			maxTokens: 128000,
+		});
+	}
+
+	if (!allModels.some(m => m.provider === "codex" && m.id === "gpt-5.1-codex-max")) {
+		allModels.push({
+			id: "gpt-5.1-codex-max",
+			name: "GPT-5.1 Codex Max",
+			api: "openai-codex",
+			baseUrl: "https://chatgpt.com/backend-api/codex",
+			provider: "codex",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: {
+				input: 1.25,
+				output: 10,
 				cacheRead: 0.125,
 				cacheWrite: 1.25,
 			},

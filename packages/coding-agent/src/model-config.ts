@@ -17,6 +17,7 @@ const ModelDefinitionSchema = Type.Object({
 		Type.Union([
 			Type.Literal("openai-completions"),
 			Type.Literal("openai-responses"),
+			Type.Literal("openai-codex"),
 			Type.Literal("anthropic-messages"),
 			Type.Literal("google-generative-ai"),
 		]),
@@ -41,6 +42,7 @@ const ProviderConfigSchema = Type.Object({
 		Type.Union([
 			Type.Literal("openai-completions"),
 			Type.Literal("openai-responses"),
+			Type.Literal("openai-codex"),
 			Type.Literal("anthropic-messages"),
 			Type.Literal("google-generative-ai"),
 		]),
@@ -252,7 +254,25 @@ export async function getApiKeyForModel(model: Model<Api>): Promise<string | und
 		// 3. Fall back to ANTHROPIC_API_KEY env var
 	}
 
-	// For OpenAI, check OAuth first
+	// For Codex provider, use OAuth only (no API key fallback)
+	if (model.provider === "codex") {
+		// Check OAuth storage (auto-refresh if needed)
+		const oauthToken = await getOAuthToken("openai");
+		if (oauthToken) {
+			return oauthToken;
+		}
+
+		// Check OPENAI_OAUTH_TOKEN env var (manual OAuth token)
+		const oauthEnv = process.env.OPENAI_OAUTH_TOKEN;
+		if (oauthEnv) {
+			return oauthEnv;
+		}
+
+		// No fallback - codex requires OAuth
+		return undefined;
+	}
+
+	// For OpenAI, check OAuth first, then fallback to API key
 	if (model.provider === "openai") {
 		// 1. Check OAuth storage (auto-refresh if needed)
 		const oauthToken = await getOAuthToken("openai");
@@ -307,11 +327,12 @@ function generateConversationId(): string {
 let sessionConversationId: string | null = null;
 
 /**
- * Get the ChatGPT OAuth context for a model (base URL and required headers).
- * Returns null if not using OpenAI OAuth or if credentials are missing.
+ * Get the OAuth context for codex provider models (headers with session-id).
+ * Returns null if not codex provider or if credentials are missing.
  */
 export async function getChatGptOAuthContext(model: Model<Api>): Promise<ChatGptOAuthContext | null> {
-	if (model.provider !== "openai") {
+	// Only codex provider needs OAuth context (session-id injection)
+	if (model.provider !== "codex") {
 		return null;
 	}
 
@@ -325,22 +346,24 @@ export async function getChatGptOAuthContext(model: Model<Api>): Promise<ChatGpt
 		sessionConversationId = generateConversationId();
 	}
 
-	// Build headers required for ChatGPT backend
-	// Based on numman-ali/opencode-openai-codex-auth and official Codex CLI
-	// Headers must be prefixed with "openai-"
+	// Build headers required for ChatGPT backend (from official Codex CLI)
+	// Headers do NOT have "openai-" prefix for the codex endpoint
 	const headers: Record<string, string> = {
-		"openai-originator": "codex_cli_rs",
-		"openai-session-id": sessionConversationId,
-		"openai-beta": "responses-1.0",
+		originator: "codex_cli_rs",
+		session_id: sessionConversationId,
+		conversation_id: sessionConversationId,
+		accept: "text/event-stream",
 	};
 
 	// Add account ID header if available
 	if (credentials.accountId) {
-		headers["openai-chatgpt-account-id"] = credentials.accountId;
+		headers["chatgpt-account-id"] = credentials.accountId;
 	}
 
+	// Note: baseUrl is already set in the model definition, we only need to inject headers
+	// Don't override baseUrl - it's already correct in the model definition
 	return {
-		baseUrl: CHATGPT_BACKEND_URL,
+		baseUrl: model.baseUrl!,
 		headers,
 	};
 }

@@ -1,17 +1,24 @@
 import type { AnthropicOptions } from "./providers/anthropic.js";
 import type { GoogleOptions } from "./providers/google.js";
+import type { OpenAICodexOptions } from "./providers/openai-codex.js";
 import type { OpenAICompletionsOptions } from "./providers/openai-completions.js";
 import type { OpenAIResponsesOptions } from "./providers/openai-responses.js";
 import type { AssistantMessageEventStream } from "./utils/event-stream.js";
 
 export type { AssistantMessageEventStream } from "./utils/event-stream.js";
 
-export type Api = "openai-completions" | "openai-responses" | "anthropic-messages" | "google-generative-ai";
+export type Api =
+	| "openai-completions"
+	| "openai-responses"
+	| "openai-codex"
+	| "anthropic-messages"
+	| "google-generative-ai";
 
 export interface ApiOptionsMap {
 	"anthropic-messages": AnthropicOptions;
 	"openai-completions": OpenAICompletionsOptions;
 	"openai-responses": OpenAIResponsesOptions;
+	"openai-codex": OpenAICodexOptions;
 	"google-generative-ai": GoogleOptions;
 }
 
@@ -26,7 +33,16 @@ const _exhaustive: _CheckExhaustive = true;
 // Helper type to get options for a specific API
 export type OptionsForApi<TApi extends Api> = ApiOptionsMap[TApi];
 
-export type KnownProvider = "anthropic" | "google" | "openai" | "xai" | "groq" | "cerebras" | "openrouter" | "zai";
+export type KnownProvider =
+	| "anthropic"
+	| "google"
+	| "openai"
+	| "xai"
+	| "groq"
+	| "cerebras"
+	| "openrouter"
+	| "zai"
+	| "codex";
 export type Provider = KnownProvider | string;
 
 export type ReasoningEffort = "minimal" | "low" | "medium" | "high";

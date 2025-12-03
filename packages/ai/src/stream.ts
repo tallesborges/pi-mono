@@ -1,5 +1,6 @@
 import { type AnthropicOptions, streamAnthropic } from "./providers/anthropic.js";
 import { type GoogleOptions, streamGoogle } from "./providers/google.js";
+import { type OpenAICodexOptions, streamOpenAICodex } from "./providers/openai-codex.js";
 import { type OpenAICompletionsOptions, streamOpenAICompletions } from "./providers/openai-completions.js";
 import { type OpenAIResponsesOptions, streamOpenAIResponses } from "./providers/openai-responses.js";
 import type {
@@ -32,6 +33,7 @@ export function getApiKey(provider: any): string | undefined {
 	// Fall back to environment variables
 	const envMap: Record<string, string> = {
 		openai: "OPENAI_API_KEY",
+		codex: "OPENAI_OAUTH_TOKEN", // Codex uses OAuth tokens
 		anthropic: "ANTHROPIC_API_KEY",
 		google: "GEMINI_API_KEY",
 		groq: "GROQ_API_KEY",
@@ -66,6 +68,9 @@ export function stream<TApi extends Api>(
 
 		case "openai-responses":
 			return streamOpenAIResponses(model as Model<"openai-responses">, context, providerOptions as any);
+
+		case "openai-codex":
+			return streamOpenAICodex(model as Model<"openai-codex">, context, providerOptions as any);
 
 		case "google-generative-ai":
 			return streamGoogle(model as Model<"google-generative-ai">, context, providerOptions);
@@ -154,6 +159,12 @@ function mapOptionsForApi<TApi extends Api>(
 				...base,
 				reasoningEffort: options?.reasoning,
 			} satisfies OpenAIResponsesOptions;
+
+		case "openai-codex":
+			return {
+				...base,
+				reasoningEffort: options?.reasoning,
+			} satisfies OpenAICodexOptions;
 
 		case "google-generative-ai": {
 			if (!options?.reasoning) return base as any;
